@@ -1,12 +1,23 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Derive the expected posting count from the job content collection so this
-// assertion stays correct as roles are added or removed.
 const jobsDir = fileURLToPath(new URL('../src/content/jobs', import.meta.url));
-const expectedRoleCount = readdirSync(jobsDir).filter((f) => f.endsWith('.md')).length;
+const jobPostings = readdirSync(jobsDir)
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => {
+        const content = readFileSync(join(jobsDir, file), 'utf8');
+        const title = content.match(/^title:\s*"([^"]+)"$/m)?.[1];
+        const location = content.match(/^location:\s*"([^"]+)"$/m)?.[1];
+
+        if (!title || !location) {
+            throw new Error(`Missing title or location in ${file}`);
+        }
+
+        return { title, location };
+    });
 
 test.describe('Open roles listing', () => {
     test('shows the roles grid with all postings', async ({ page }) => {
@@ -15,7 +26,19 @@ test.describe('Open roles listing', () => {
 
         const grid = page.getByTestId('roles-grid');
         await expect(grid).toBeVisible();
-        await expect(page.getByTestId('role-card')).toHaveCount(expectedRoleCount);
+        await expect(page.getByTestId('role-card')).toHaveCount(jobPostings.length);
+    });
+
+    test('shows each role location as a card label', async ({ page }) => {
+        await page.goto('/');
+
+        for (const { title, location } of jobPostings) {
+            const card = page.getByTestId('role-card').filter({
+                has: page.getByRole('heading', { name: title, exact: true }),
+            });
+
+            await expect(card.getByTestId('role-location')).toHaveText(location);
+        }
     });
 
     test('links through to a role detail page', async ({ page }) => {
@@ -31,14 +54,13 @@ test.describe('Open roles listing', () => {
         { title: 'Senior Frontend Engineer', location: 'Remote (US & Canada)' },
         { title: 'Financial Analyst', location: 'Woodinville, WA, USA' },
     ]) {
-        test(`keeps ${title} location on details, not starter cards`, async ({ page }) => {
+        test(`shows ${title} location on its detail page`, async ({ page }) => {
             await page.goto('/');
             const card = page.getByTestId('role-card').filter({
                 has: page.getByRole('heading', { name: title, exact: true }),
             });
 
             await expect(card).toBeVisible();
-            await expect(card.getByText(location, { exact: true })).toHaveCount(0);
             await card.click();
             await expect(page.getByText(location, { exact: true })).toBeVisible();
         });
